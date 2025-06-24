@@ -7,11 +7,23 @@
 
 using std::placeholders::_1;
 
+struct WayPoint {
+  double dx;   // change in the x-coordinate of the robot's position
+  double dy;   // change in the y-coordinate of the robot's position
+  double dphi; // change in the orientation angle of the robot
+
+  WayPoint(double a, double b, double c = 0.0) : dx(a), dy(b), dphi(c) {}
+};
+
 class DistanceController : public rclcpp::Node {
 public:
   DistanceController() : Node("distance_controller") {
     odom_sub = this->create_subscription<nav_msgs::msg::Odometry>(
-        "/rosbot_xl_base_controller/odom", 10, std::bind(&DistanceController::topic_callback, this, _1));
+        "/rosbot_xl_base_controller/odom", 10,
+        std::bind(&DistanceController::topic_callback, this, _1));
+
+    // Initialize the trajectory waypoints
+    waypoints_traj_init();
   }
 
 private:
@@ -39,6 +51,22 @@ private:
     old_y = current_y;
   }
 
+  // Add all the waypoints the robot is going throughout the trajectory
+  void waypoints_traj_init() {
+
+    waypoints_traj.push_back(WayPoint(+0.000, +1.000)); // Step 1
+    waypoints_traj.push_back(WayPoint(+0.000, -1.000)); // Step 2
+    waypoints_traj.push_back(WayPoint(+0.000, -1.000)); // Step 3
+    waypoints_traj.push_back(WayPoint(+0.000, +1.000)); // 4
+    waypoints_traj.push_back(WayPoint(+1.000, +1.000)); // 5
+    waypoints_traj.push_back(WayPoint(-1.000, -1.000)); // 6
+    waypoints_traj.push_back(WayPoint(+1.000, -1.000)); // 7
+    waypoints_traj.push_back(WayPoint(-1.000, +1.000)); // 8
+    waypoints_traj.push_back(WayPoint(+1.000, +0.000)); // 9
+    waypoints_traj.push_back(WayPoint(-1.000, +0.000)); // 10
+  }
+
+  // Variable declarations
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub;
 
   // Parameters used to compute the distance travelled
@@ -51,6 +79,9 @@ private:
   double distance_travelled_x = 0.0;
   double distance_travelled_y = 0.0;
   double distance_travelled = 0.0;
+
+  // Waypoints the robot is passing by
+  std::vector<WayPoint> waypoints_traj;
 };
 
 int main(int argc, char *argv[]) {
