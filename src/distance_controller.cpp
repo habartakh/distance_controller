@@ -15,6 +15,27 @@ struct WayPoint {
   WayPoint(double a, double b, double c = 0.0) : dx(a), dy(b), dphi(c) {}
 };
 
+enum MotionType { // To be executed by the rosbot
+  WEST,
+  WEST_REVERSE,
+  EAST,
+  EAST_REVERSE,
+  NORTH_WEST,
+  NORTH_WEST_REVERSE,
+  NORTH_EAST,
+  NORTH_EAST_REVERSE,
+  NORTH,
+  NORTH_REVERSE
+};
+
+// Overload the ++ operator for enum to increment the motion types
+// source: https://cplusplus.com/forum/beginner/41790/
+inline MotionType &operator++(MotionType &eDOW, int) {
+  const int i = static_cast<int>(eDOW);
+  eDOW = static_cast<MotionType>((i + 1) % 10);
+  return eDOW;
+}
+
 class DistanceController : public rclcpp::Node {
 public:
   DistanceController() : Node("distance_controller") {
@@ -66,6 +87,53 @@ private:
     waypoints_traj.push_back(WayPoint(-1.000, +0.000)); // 10
   }
 
+  // Move the robot according to the desired trajectory
+  void control_loop() {
+
+    switch (motion_type) {
+
+    case WEST:
+      RCLCPP_INFO_ONCE(this->get_logger(), "Move WEST");
+      break;
+
+    case WEST_REVERSE:
+      RCLCPP_INFO_ONCE(this->get_logger(), "Move WEST_REVERSE");
+      break;
+
+    case EAST:
+      RCLCPP_INFO_ONCE(this->get_logger(), "Move EAST");
+      break;
+
+    case EAST_REVERSE:
+      RCLCPP_INFO_ONCE(this->get_logger(), "Move EAST_REVERSE");
+      break;
+
+    case NORTH_WEST:
+      RCLCPP_INFO_ONCE(this->get_logger(), "Move NORTH_WEST");
+      break;
+
+    case NORTH_WEST_REVERSE:
+      RCLCPP_INFO_ONCE(this->get_logger(), "Move NORTH_WEST_REVERSE");
+      break;
+
+    case NORTH_EAST:
+      RCLCPP_INFO_ONCE(this->get_logger(), "Move NORTH_EAST");
+      break;
+
+    case NORTH_EAST_REVERSE:
+      RCLCPP_INFO_ONCE(this->get_logger(), "Move NORTH_EAST_REVERSE");
+      break;
+
+    case NORTH:
+      RCLCPP_INFO_ONCE(this->get_logger(), "Move NORTH");
+      break;
+
+    case NORTH_REVERSE:
+      RCLCPP_INFO_ONCE(this->get_logger(), "Move NORTH_REVERSE");
+      break;
+    }
+  }
+
   // Variable declarations
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub;
 
@@ -82,6 +150,8 @@ private:
 
   // Waypoints the robot is passing by
   std::vector<WayPoint> waypoints_traj;
+  // The direction that should be followed by the rosbot
+  enum MotionType motion_type;
 };
 
 int main(int argc, char *argv[]) {
