@@ -1,11 +1,14 @@
+#include <chrono>
 #include <cmath>
 #include <memory>
 
+#include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 using std::placeholders::_1;
+using namespace std::chrono_literals;
 
 struct WayPoint {
   double dx;   // change in the x-coordinate of the robot's position
@@ -43,8 +46,15 @@ public:
         "/rosbot_xl_base_controller/odom", 10,
         std::bind(&DistanceController::topic_callback, this, _1));
 
+    twist_pub =
+        this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
+    twist_timer = this->create_wall_timer(
+        100ms, std::bind(&DistanceController::control_loop, this));
+
     // Initialize the trajectory waypoints
     waypoints_traj_init();
+
+    RCLCPP_INFO(this->get_logger(), "Initialized distance controller node");
   }
 
 private:
@@ -61,12 +71,12 @@ private:
 
     distance_travelled += std::sqrt(dx * dx + dy * dy);
 
-    RCLCPP_INFO(this->get_logger(), "dx = %f ", dx);
-    RCLCPP_INFO(this->get_logger(), "dy = %f ", dy);
-    RCLCPP_INFO(this->get_logger(), "distance_travelled_x = %f ",
-                distance_travelled_x);
-    RCLCPP_INFO(this->get_logger(), "distance_travelled_y = %f ",
-                distance_travelled_y);
+    // RCLCPP_INFO(this->get_logger(), "dx = %f ", dx);
+    // RCLCPP_INFO(this->get_logger(), "dy = %f ", dy);
+    // RCLCPP_INFO(this->get_logger(), "distance_travelled_x = %f ",
+    //          distance_travelled_x);
+    // RCLCPP_INFO(this->get_logger(), "distance_travelled_y = %f ",
+    //           distance_travelled_y);
 
     old_x = current_x;
     old_y = current_y;
@@ -90,52 +100,78 @@ private:
   // Move the robot according to the desired trajectory
   void control_loop() {
 
-    switch (motion_type) {
+    // First test only on one motion type
 
-    case WEST:
-      RCLCPP_INFO_ONCE(this->get_logger(), "Move WEST");
-      break;
+    WayPoint target = waypoints_traj[0]; // West direction
 
-    case WEST_REVERSE:
-      RCLCPP_INFO_ONCE(this->get_logger(), "Move WEST_REVERSE");
-      break;
-
-    case EAST:
-      RCLCPP_INFO_ONCE(this->get_logger(), "Move EAST");
-      break;
-
-    case EAST_REVERSE:
-      RCLCPP_INFO_ONCE(this->get_logger(), "Move EAST_REVERSE");
-      break;
-
-    case NORTH_WEST:
-      RCLCPP_INFO_ONCE(this->get_logger(), "Move NORTH_WEST");
-      break;
-
-    case NORTH_WEST_REVERSE:
-      RCLCPP_INFO_ONCE(this->get_logger(), "Move NORTH_WEST_REVERSE");
-      break;
-
-    case NORTH_EAST:
-      RCLCPP_INFO_ONCE(this->get_logger(), "Move NORTH_EAST");
-      break;
-
-    case NORTH_EAST_REVERSE:
-      RCLCPP_INFO_ONCE(this->get_logger(), "Move NORTH_EAST_REVERSE");
-      break;
-
-    case NORTH:
-      RCLCPP_INFO_ONCE(this->get_logger(), "Move NORTH");
-      break;
-
-    case NORTH_REVERSE:
-      RCLCPP_INFO_ONCE(this->get_logger(), "Move NORTH_REVERSE");
-      break;
+    // Compute the distance left to the target
+    double error_x = target.dx - distance_travelled_x;
+    double error_y = target.dy - distance_travelled_y;
+    double distance = std::hypot(error_x, error_y);
+    /*
+        RCLCPP_INFO(this->get_logger(), "target.dx = %f ", target.dx);
+        RCLCPP_INFO(this->get_logger(), "target.dy = %f ", target.dy);
+        RCLCPP_INFO(this->get_logger(), "error_x = %f ", error_x);
+        RCLCPP_INFO(this->get_logger(), "error_y = %f ", error_y);
+        RCLCPP_INFO(this->get_logger(), "distance = %f ", distance);
+    */
+    // stop after reaching the target
+    if (distance < 0.02) {
+      RCLCPP_INFO(this->get_logger(), "Reached waypoint!! ");
+      stop_robot();
+      return;
     }
+
+    // Calculate delta time
+    rclcpp::Time now = this->now();
+    double dt =
+        prev_time.nanoseconds() == 0 ? 0.05 : (now - prev_time).seconds();
+    prev_time = now;
+
+    // Integral terms
+    integral_x += error_x * dt;
+    integral_y += error_y * dt;
+
+    RCLCPP_INFO(this->get_logger(), "integral_x = %f ", integral_x);
+    RCLCPP_INFO(this->get_logger(), "integral_y = %f ", integral_y);
+
+    // Derivative terms
+    double derivative_x = (error_x - prev_error_x) / dt;
+    double derivative_y = (error_y - prev_error_y) / dt;
+
+    RCLCPP_INFO(this->get_logger(), "derivative_x = %f ", derivative_x);
+    RCLCPP_INFO(this->get_logger(), "derivative_y = %f ", derivative_y);
+
+    // PID control signal
+    double vx = kp * error_x + ki * integral_x + kd * derivative_x;
+    double vy = kp * error_y + ki * integral_y + kd * derivative_y;
+
+    RCLCPP_INFO(this->get_logger(), "vx = %f ", vx);
+    RCLCPP_INFO(this->get_logger(), "vy = %f ", vy);
+
+    twist_cmd.linear.x = vx;
+    twist_cmd.linear.y = vy;
+    twist_cmd.angular.z = 0.0;
+
+    twist_pub->publish(twist_cmd);
+
+    prev_error_x = error_x;
+    prev_error_y = error_y;
+  }
+
+  void stop_robot() {
+    geometry_msgs::msg::Twist stop_msg;
+    twist_cmd.linear.x = 0.0;
+    twist_cmd.linear.y = 0.0;
+    twist_cmd.angular.z = 0.0;
+
+    twist_pub->publish(stop_msg);
   }
 
   // Variable declarations
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub;
+  rclcpp::TimerBase::SharedPtr twist_timer;
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr twist_pub;
 
   // Parameters used to compute the distance travelled
   double old_x = 0.0;
@@ -152,6 +188,19 @@ private:
   std::vector<WayPoint> waypoints_traj;
   // The direction that should be followed by the rosbot
   enum MotionType motion_type;
+
+  // PID controller parameters
+  double kp = 1.5;         // Proportional Gain
+  double ki = 0.0;         // Integral Gain
+  double kd = 0.3;         // Derivative Gain
+  double integral_x = 0.0; // Integral terms of the PID controller
+  double integral_y = 0.0;
+  rclcpp::Time prev_time; // instant t-1
+  double prev_error_x = 0.0;
+  double prev_error_y = 0.0;
+
+  // Parameters to move the robot
+  geometry_msgs::msg::Twist twist_cmd;
 };
 
 int main(int argc, char *argv[]) {
