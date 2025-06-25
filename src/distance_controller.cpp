@@ -18,27 +18,6 @@ struct WayPoint {
   WayPoint(double a, double b, double c = 0.0) : dx(a), dy(b), dphi(c) {}
 };
 
-enum MotionType { // To be executed by the rosbot
-  WEST,
-  WEST_REVERSE,
-  EAST,
-  EAST_REVERSE,
-  NORTH_WEST,
-  NORTH_WEST_REVERSE,
-  NORTH_EAST,
-  NORTH_EAST_REVERSE,
-  NORTH,
-  NORTH_REVERSE
-};
-
-// Overload the ++ operator for enum to increment the motion types
-// source: https://cplusplus.com/forum/beginner/41790/
-inline MotionType &operator++(MotionType &eDOW, int) {
-  const int i = static_cast<int>(eDOW);
-  eDOW = static_cast<MotionType>((i + 1) % 10);
-  return eDOW;
-}
-
 class DistanceController : public rclcpp::Node {
 public:
   DistanceController() : Node("distance_controller") {
@@ -49,7 +28,7 @@ public:
     twist_pub =
         this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
     twist_timer = this->create_wall_timer(
-        100ms, std::bind(&DistanceController::control_loop, this));
+        200ms, std::bind(&DistanceController::control_loop, this));
 
     // Initialize the trajectory waypoints
     waypoints_traj_init();
@@ -100,9 +79,13 @@ private:
   // Move the robot according to the desired trajectory
   void control_loop() {
 
-    // First test only on one motion type
+    if (traj_index >= waypoints_traj.size()) {
+      stop_robot();
+      RCLCPP_INFO_ONCE(this->get_logger(), "Completed the trajectory! ");
+      return;
+    }
 
-    WayPoint target = waypoints_traj[0]; // West direction
+    WayPoint target = waypoints_traj[traj_index]; // West direction
 
     // Compute the distance left to the target
     double error_x = target.dx - distance_travelled_x;
@@ -117,8 +100,13 @@ private:
     */
     // stop after reaching the target
     if (distance < 0.02) {
-      RCLCPP_INFO(this->get_logger(), "Reached waypoint!! ");
+      RCLCPP_INFO(this->get_logger(), "Reached waypoint! ");
       stop_robot();
+      traj_index++; // Update the next motion index
+
+      // reset distances travelled to compute next trajectory errors
+      distance_travelled_x = 0.0;
+      distance_travelled_y = 0.0;
       return;
     }
 
@@ -132,19 +120,17 @@ private:
     integral_x += error_x * dt;
     integral_y += error_y * dt;
 
-    RCLCPP_INFO(this->get_logger(), "integral_x = %f ", integral_x);
-    RCLCPP_INFO(this->get_logger(), "integral_y = %f ", integral_y);
-
     // Derivative terms
     double derivative_x = (error_x - prev_error_x) / dt;
     double derivative_y = (error_y - prev_error_y) / dt;
 
-    RCLCPP_INFO(this->get_logger(), "derivative_x = %f ", derivative_x);
-    RCLCPP_INFO(this->get_logger(), "derivative_y = %f ", derivative_y);
-
-    // PID control signal
+    // PID control law
     double vx = kp * error_x + ki * integral_x + kd * derivative_x;
     double vy = kp * error_y + ki * integral_y + kd * derivative_y;
+
+    // Make sure the robot does stays within max speed bounds
+    vx = std::clamp(vx, -max_speed, +max_speed);
+    vy = std::clamp(vy, -max_speed, +max_speed);
 
     RCLCPP_INFO(this->get_logger(), "vx = %f ", vx);
     RCLCPP_INFO(this->get_logger(), "vy = %f ", vy);
@@ -186,18 +172,18 @@ private:
 
   // Waypoints the robot is passing by
   std::vector<WayPoint> waypoints_traj;
-  // The direction that should be followed by the rosbot
-  enum MotionType motion_type;
+  long unsigned int traj_index = 0;
 
   // PID controller parameters
-  double kp = 1.5;         // Proportional Gain
-  double ki = 0.0;         // Integral Gain
-  double kd = 0.3;         // Derivative Gain
+  double kp = 3.5;         // Proportional Gain
+  double ki = 0.05;        // Integral Gain
+  double kd = 2.0;         // Derivative Gain
   double integral_x = 0.0; // Integral terms of the PID controller
   double integral_y = 0.0;
   rclcpp::Time prev_time; // instant t-1
   double prev_error_x = 0.0;
   double prev_error_y = 0.0;
+  double max_speed = 0.8; // source: https://husarion.com/manuals/rosbot-xl/
 
   // Parameters to move the robot
   geometry_msgs::msg::Twist twist_cmd;
