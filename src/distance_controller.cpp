@@ -89,7 +89,7 @@ private:
     if (traj_index >= waypoints_traj.size()) {
       stop_robot();
       RCLCPP_INFO_ONCE(this->get_logger(), "Completed the trajectory! ");
-      return;
+      rclcpp::shutdown();
     }
 
     WayPoint target = waypoints_traj[traj_index];
